@@ -1,0 +1,314 @@
+<apex:page docType="html-5.0" recordSetvar="files" StandardController="File__c" extensions="FileUploadController" showHeader="false" standardStyleSheets="false">
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <apex:stylesheet value="{!$Resource.Bootstrap3_3_5}/css/bootstrap.min.css"/>
+    <apex:includeScript value="{!$Resource.AngularJS}"/>
+    <apex:includeScript value="{!$Resource.Jquery_2_1_4}"/>
+    <apex:includeScript value="{!$Resource.Bootstrap3_3_5}/js/bootstrap.min.js"/> 
+    <script type="text/javascript">__sfdcSessionId = '{!$Api.Session_Id}';</script>
+    <script src="{!$REsource.ConnectionModified}" /> 
+    
+    <style>
+        .btn-file {
+            position: relative;
+            overflow: hidden;
+        }
+        .btn-file input[type=file] {
+            position: absolute;
+            top: 0;
+            right: 0;
+            min-width: 100%;
+            min-height: 100%;
+            font-size: 100px;
+            text-align: right;
+            filter: alpha(opacity=0);
+            opacity: 0;
+            outline: none;
+            background: white;
+            cursor: inherit;
+            display: block;
+        }
+        .glyphicon-remove{
+            color: #CC0000;
+        }
+        .btn-primary{
+        	margin-right: 5px;
+        	margin-top: 5px;
+        }
+    </style>  
+    
+    <script> 
+        var limitMsgLabel = '{!JSEncode($Label.File_Size_Limit_Msg)}';
+        var fileProcessed = 0;
+        var isFileObjSaved = false;
+        var maxFileSizeLimitInMB = {!MaxFileSizeLimitInMB};
+        var PROFILE_HEIGHT = {!ProfileHeightInPixel};
+        var PROFILE_WIDTH = {!ProfileWidthInPixel};
+        var STATION_PROFILE_IMAGE_ID = '{!ProfileImageRecordType}';
+        
+        // Create angular js model and controller
+        var fileUploadModule = angular.module('fileUploadApp', []);
+        
+        fileUploadModule.controller('fileUploadController', function($scope) {
+            // Array of files browsed by users
+            $scope.filesAttachment = new Array();
+            $scope.files = new Array();
+            
+            // This method gets called when user select files through browser
+            $scope.fileSelected = function(inputFile){
+                var currentLength = $scope.filesAttachment.length;
+                var selectedFileInfo = '';
+                var message = '';
+                // Iterate through all the selected files and send file name and size to server
+                for(var i = 0; i < inputFile.files.length; i++){
+                    // If a file size exceeds to maxFileSizeLimitInMB then remove it and add error message alert 
+                    if(inputFile.files[i].size > maxFileSizeLimitInMB * 1024*1024){
+                        var errorMsg = limitMsgLabel;
+                        errorMsg = errorMsg.replace('[FILE_NAME]',inputFile.files[i].name);
+                        errorMsg = errorMsg.replace('[LIMIT]',maxFileSizeLimitInMB)
+                        message += errorMsg+'<br\>';
+                    }
+                    else{
+                        $scope.filesAttachment.push(inputFile.files[i]);
+                        selectedFileInfo += inputFile.files[i].name+'`'+$scope.getFileSize(inputFile.files[i].size)+'~';
+                    }
+                }
+                if(message != ''){
+                    $('#alertMsg').html(message);
+                    $('#fileSizeAlert').show();
+                }
+                if(selectedFileInfo != ''){
+                    addFilesOnSF(selectedFileInfo);
+                }
+                $scope.$apply();
+            },
+            
+            // This method gets called on oncomplete of add record only button i.e. after record gets added to the server
+            $scope.addRecordOnly = function(){
+                $scope.filesAttachment.push({skip: true});
+            },
+            // This method resize data of passed image file and upload it to salesforce
+            // canvas is used toresize image
+            $scope.resizeAndUpload = function(f, curItem, imageData){
+                var img = new Image();
+                img.onload = function(){
+                    var canvas = document.createElement('canvas');
+                    canvas.width = PROFILE_WIDTH;
+                    canvas.height = PROFILE_HEIGHT;
+                    var ctx = canvas.getContext("2d");
+                    ctx.drawImage(this, 0, 0, PROFILE_WIDTH, PROFILE_HEIGHT);
+                    var dataURL = canvas.toDataURL();
+                    var data = dataURL.replace('data:image/png;base64,','');
+                    $scope.uploadAttachmentToSF(f, curItem, data);
+                }
+                img.src = imageData;
+            },
+            // This method save attachment to salesforce via ajax
+            $scope.uploadAttachmentToSF = function(f, curItem, body){
+                var attachment = new sforce.SObject('Attachment');  
+                attachment.Name = $('.name'+curItem).val();;  
+                attachment.ContentType = f.type;  
+                attachment.Body = body;  
+                attachment.ParentId  = $('.id'+curItem).val();  
+                var result = sforce.connection.create([attachment], {
+                    // This method gets called when file upload is in progress
+                    progress: function(oEvent) {
+                        if(oEvent.lengthComputable) {
+                            var percentComplete = parseInt(oEvent.loaded / oEvent.total) * 100;
+                            $('.progress'+curItem).width(percentComplete +'%');
+                            $('.progress'+curItem).html(percentComplete +'%');
+                        } 
+                        else {
+                            // Unable to compute progress information since the total size is unknown
+                        }
+                    },
+                    onSuccess: function(success){
+                        fileProcessed++;
+                        // When all the file upload process complete then redirect page to parent 
+                        // page by calling cancel click
+                        if(fileProcessed == $scope.filesAttachment.length){
+                            $('.cancelBtn').click();
+                        }
+                    },
+                    onFailure:function(failure){
+                        $('.progress'+curItem).width('0%');
+                        $('.progress'+curItem).html('Failed');
+                    }
+                }); 
+            },
+            // This method removed record from filesAttachment array and then  remove it from server by calling removeFileFromSF
+            $scope.removeClientFile = function(isRecordOnly, index){
+                if(isRecordOnly == 'false'){
+                    $scope.filesAttachment.splice(index, 1);
+                }
+                removeFileFromSF(index);
+            },
+            // This method calculate file size
+            $scope.getFileSize = function(fSize){
+                var size = '';
+                if(fSize < 1024){
+                    size = fSize + ' bytes';
+                }
+                else if(fSize > 1024 && fSize < 1024 * 1024){
+                    size = Math.ceil(fSize / 1024) + ' KB';
+                }
+                else{
+                    size = Math.ceil(fSize / (1024 * 1024)) + ' MB';
+                }
+                return size;
+            }
+            // This method saves selected files in attachment and relate it to custom file which is inserted on server
+            $scope.saveAttachment = function(inputFile){
+            
+                // Perform action only if records are save successfully on server
+                if(isFileObjSaved == 'true'){
+                    
+                    // Disable button so that user wont be able to perform any action
+                    $('.btn-primary').attr('disabled',true);
+                    
+                    for(var i = 0; i < $scope.filesAttachment.length; i++){
+                        var file = $scope.filesAttachment[i];
+                        // Skip row if file is record only 
+                        if(file.skip == true){
+                            fileProcessed++;
+                            if(fileProcessed == $scope.filesAttachment.length){
+                                $('.cancelBtn').click();
+                            }
+                            continue; 
+                        }
+                        var fileReader = new FileReader();
+                        fileReader.onload  = (function(f, curItem) {
+                            return function(e) {
+                                // if record type is station profile image and user has selected image file 
+                                // then resize image and upload
+                                if($($('.recordType'+curItem)[0]).val()== STATION_PROFILE_IMAGE_ID && f.type.indexOf("image") != -1){
+                                    $scope.resizeAndUpload(f, curItem, e.target.result);
+                                }
+                                else{
+                                    var body = window.btoa(this.result);  //Base 64 encode the file before sending it
+                                    $scope.uploadAttachmentToSF(f, curItem, body);
+                                }
+                            }
+                        })(file, i);
+                        fileReader.onerror = function(e) {
+                            alert("There was an error reading the file.  Please try again.");
+                        };
+                        fileReader.onabort = function(e) {
+                            alert("There was an error reading the file.  Please try again.");
+                        };
+                        
+                        // if record type is station profile image and fiel type is iamge then read data as url else binary
+                        if($($('.recordType'+i)[0]).val()== STATION_PROFILE_IMAGE_ID && file.type.indexOf("image") != -1){
+                            fileReader.readAsDataURL(file);      
+                        }
+                        else{
+                            fileReader.readAsBinaryString(file);      
+                        }
+                    }
+                }
+            };
+        });
+    </script>
+
+    <div ng-app="fileUploadApp" ng-controller="fileUploadController" class="container">
+        <apex:form id="form" styleclass="form">
+            <div class="panel panel-default">
+                <div class="panel-heading">{!$Label.FileUploadPage_Header}</div>
+                <div class="panel-body">
+                    <apex:outputpanel id="msgPanel">
+                        <script>    
+                            isFileObjSaved = '{!isSuccess}';
+                        </script>
+                        <apex:pageMessages />
+                    </apex:outputpanel>
+                    <div class="alert alert-danger" id="fileSizeAlert" style="display:none;">
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button> 
+                        <div id="alertMsg"/>
+                    </div>
+                    <apex:outputpanel id="fileTbl" layout="block" styleclass="table-responsive" rendered="{!parentId != null}">
+                        <apex:variable value="{!0}" var="index"/> 
+                        <apex:dataTable value="{!customFileList}" var="cFile" styleclass="table">
+                            <apex:column >
+                                <a onclick="angular.element($('.container')).scope().removeClientFile('{!cFile.Is_Record_Only__c}','{!index}');">
+                                    <span class="glyphicon glyphicon-remove" aria-hidden="true"></span>
+                                </a>
+                            </apex:column>
+                            <apex:column headerValue="{!$ObjectType.File__c.fields.RecordTypeId.Label}" >
+                                <input type="hidden" value="{!cFile.Id}" class="id{!index}"/>
+                                <apex:actionRegion >
+                                <apex:inputField value="{!cFile.RecordTypeId}" styleclass="form-control recordType{!index}">
+                                    <apex:actionsupport event="onchange" rerender="docType"/>
+                                </apex:inputField>
+                                </apex:actionRegion>
+                            </apex:column>
+                            <apex:column headerValue="{!$ObjectType.File__c.fields.Name__c.Label}">
+                                <apex:inputField value="{!cFile.Name__c}" styleclass="name{!index} form-control" required="true"/>
+                            </apex:column>
+                            <apex:column headerValue="{!$ObjectType.File__c.fields.Document_Type__c.Label}">
+                                 <apex:inputField value="{!cFile.Document_Type__c}" id="docType" styleclass="form-control" required="true"/>
+                            </apex:column>
+                             <apex:column headerValue="{!$ObjectType.File__c.fields.Status__c.Label}">
+                                 <apex:inputField value="{!cFile.Status__c}" styleclass="form-control" required="true"/>
+                            </apex:column>
+                             <apex:column headerValue="{!$ObjectType.File__c.fields.Document_Group__c.Label}">
+                                 <apex:inputField value="{!cFile.Document_Group__c}" styleclass="form-control"/>
+                            </apex:column>
+                             <apex:column headerValue="{!$ObjectType.File__c.fields.File_Size__c.Label}">
+                                 <apex:inputText styleclass="fileSize{!index} form-control" value="{!cFile.File_Size__c}" html-readonly="true"/>
+                            </apex:column>
+                            <apex:column headerValue="{!$Label.Progress}">
+                                <div class="progress" style="display:{!if(cFile.Is_Record_Only__c == true, 'none','block')};">
+                                    <div class="progress-bar progress-bar-success progress{!index}" role="progressbar" aria-valuenow="40" aria-valuemin="0" aria-valuemax="100" style="width: 0%">
+                                    </div>
+                                </div>
+                                <apex:variable value="{!index+1}" var="index"/>
+                            </apex:column>
+                        </apex:dataTable>
+                        <apex:outputPanel layout="block" styleclass="text-center" rendered="{!customFileList.size == 0}">
+                        	No File Selected
+                        </apex:outputPanel>
+                    </apex:outputpanel> 
+                    <div class="row">
+                        <div class="col-xs-12">
+                            <div class="pull-right">
+                                <div class="btn btn-primary btn-file" style="display:{!If(parentId != null, 'inline-block','none')}">
+                                    {!$Label.Browse_Btn} 
+                                    <input type="file" multiple="true" class="btn btn-primary" onchange="angular.element(this).scope().fileSelected(this)" ng-Change="fileSelected(this)"/>
+                                </div>
+                                <apex:commandButton action="{!insertFiles}" rendered="{!parentId != null}" status="processStatus" id="saveBtn" disabled="{!customFileList.size == 0}" value="{!$Label.Save_Btn}" oncomplete="angular.element($('.container')).scope().saveAttachment()" rerender="fileTbl,msgPanel" styleclass="btn btn-primary"/>
+                                <apex:commandButton action="{!addRecordOnly}" rendered="{!parentId != null}" status="processStatus" value="{!$Label.Add_Record_Only_Btn}" oncomplete="angular.element($('.container')).scope().addRecordOnly()"  rerender="fileTbl,saveBtn" styleclass="btn btn-primary"/> 
+                                <apex:commandButton action="{!Cancel}" value="{!$Label.Cancel_Btn}" rerender="fileTbl,saveBtn" styleclass="btn btn-primary cancelBtn"/>
+                            </div>
+                        </div>
+                    </div>
+                    <apex:actionFunction action="{!addFiles}" rerender="fileTbl,saveBtn" name="addFilesOnSF" status="processStatus" oncomplete="angular.element($('.container')).scope().$apply()" immediate="true">
+                        <apex:param value="" assignTo="{!fileDetails}" name="noOfFilesSelected"/>
+                    </apex:actionFunction>
+                    <apex:actionFunction action="{!removeFile}" rerender="fileTbl,saveBtn" name="removeFileFromSF" status="processStatus" immediate="true">
+                        <apex:param value="" name="recIndex"/>
+                    </apex:actionFunction>
+                </div>
+            </div>     
+            
+            <apex:actionstatus id="processStatus" onstart="$('#pleaseWaitDialog').modal('show');" onstop=" $('#pleaseWaitDialog').modal('hide');">
+            </apex:actionstatus>
+            <div class="modal fade" id="pleaseWaitDialog" role="dialog" data-backdrop="static">
+                <div class="modal-dialog">
+                    <!-- Modal content-->
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h1>{!$Label.Processing_Msg}</h1>
+                        </div>
+                        <div class="modal-body">
+                            <div class="progress">
+                                <div class="progress-bar progress-bar-info progress-bar-striped" role="progressbar" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100" style="width: 100%">
+                                </div>
+                            </div>
+                        </div>
+                    </div>    
+                </div>
+            </div>    
+        </apex:form>
+    </div>
+</apex:page>

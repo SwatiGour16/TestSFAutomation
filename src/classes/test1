@@ -1,0 +1,137 @@
+<apex:page docType="html-5.0" recordSetvar="files" StandardController="File__c" extensions="FileUploadController" showHeader="false" standardStyleSheets="false">
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <apex:stylesheet value="{!$Resource.Bootstrap3_3_5}/css/bootstrap.min.css"/>
+    <apex:includeScript value="{!$Resource.AngularJS}"/>
+    <apex:includeScript value="{!$Resource.Jquery_2_1_4}"/>
+    <apex:includeScript value="{!$Resource.Bootstrap3_3_5}/js/bootstrap.min.js"/> 
+    <script type="text/javascript">__sfdcSessionId = '{!$Api.Session_Id}';</script>
+    <script src="{!$REsource.ConnectionModified}" /> 
+    <apex:stylesheet value="{!$Resource.FileUpload}/fileupload.css"/>
+    <apex:includeScript value="{!$Resource.FileUpload}/fileupload.js"/>
+    
+    <script> 
+        var limitMsgLabel = '{!JSEncode($Label.File_Size_Limit_Msg)}';
+        var fileProcessed = 0;
+        var isFileObjSaved = false;
+        var maxFileSizeLimitInMB = {!MaxFileSizeLimitInMB};
+        var PROFILE_HEIGHT = {!ProfileHeightInPixel};
+        var PROFILE_WIDTH = {!ProfileWidthInPixel};
+        var STATION_PROFILE_IMAGE_ID = '{!ProfileImageRecordType}';
+    </script>
+    <div>
+        <nav class="navbar navbar-default navbar-static-top">
+            <div class="container">
+                <div class="navbar-header">
+                    <a class="navbar-brand" href="#">{!$Label.FileUploadPage_Header}</a>
+                </div>
+            </div>
+        </nav>  
+    </div>
+    <div ng-app="fileUploadApp" ng-controller="fileUploadController" class="container-fluid">
+        <apex:form id="form" styleclass="form">
+            <div class="row">
+                <div class="col-xs-12">
+                    <apex:outputpanel id="msgPanel">
+                        <script>    
+                            isFileObjSaved = '{!isSuccess}';
+                        </script>
+                        <apex:pageMessages />
+                    </apex:outputpanel>
+                    <div class="alert alert-danger" id="fileSizeAlert" style="display:none;">
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button> 
+                        <div id="alertMsg"/>
+                    </div>
+                    <apex:actionFunction action="{!updateDocType}" rerender="fileTbl" name="updateDocType" status="processStatus">
+                        <apex:param name="currentRecType" value=""/>
+                    </apex:actionFunction>
+                    <apex:outputpanel id="fileTbl" layout="block" styleclass="table-responsive" rendered="{!parentId != null}">                       
+                        <apex:variable value="{!0}" var="index"/> 
+                        <apex:dataTable value="{!customFileList}" var="cFile" styleclass="table">
+                            <apex:column width="5%">
+								<div>
+									<a title="Edit" ng-if="{!Not(IsBlank(cFile.Id))}" style="padding:5%;">
+										<span class="glyphicon glyphicon-pencil" aria-hidden="true"></span>
+									</a>
+									<a onclick="angular.element($('.container')).scope().removeClientFile('{!cFile.Is_Record_Only__c}','{!index}');">
+										<span class="glyphicon glyphicon-remove" aria-hidden="true"></span>
+									</a>
+								</div>
+                            </apex:column>
+                            <apex:column headerValue="Record Type" >
+                                <input type="hidden" value="{!cFile.Id}" class="id{!index}"/>
+                                <apex:selectList value="{!cFile.RecordTypeId}" styleclass="form-control recordType{!index} recType" size="1">
+                                    <apex:selectOptions  value="{!RecordTypeOptions}"/>
+                                    <apex:actionsupport event="onchange" action="{!updateDocType}" rerender="docType,docGroup,docStatus" status="processStatus">
+                                        <apex:param value="{!index}" name="index"/>
+                                    </apex:actionsupport>
+                                </apex:selectList>
+                            </apex:column>
+                            <apex:column headerValue="{!$ObjectType.File__c.fields.Name__c.Label}">
+                                <apex:inputField value="{!cFile.Name__c}" styleclass="name{!index} form-control" required="true"/>
+                            </apex:column>
+                            <apex:column headerValue="{!$ObjectType.File__c.fields.Document_Type__c.Label}">
+                                 <apex:inputField value="{!cFile.Document_Type__c}" id="docType" styleclass="form-control" style="width: 250px;"/>
+                            </apex:column>
+                             <apex:column headerValue="{!$ObjectType.File__c.fields.Status__c.Label}">
+                                 <apex:inputField value="{!cFile.Status__c}" id="docStatus" styleclass="form-control" required="true"/>
+                            </apex:column>
+                            <apex:column headerValue="{!$ObjectType.File__c.fields.File_Size__c.Label}">
+                                 <apex:inputText styleclass="fileSize{!index} form-control" value="{!cFile.File_Size__c}" html-readonly="true"/>
+                            </apex:column>
+                            <apex:column headerValue="{!$Label.Progress}">
+                                <div class="progress" style="display:{!if(cFile.Is_Record_Only__c == true, 'none','block')};">
+                                    <div class="progress-bar progress-bar-success progress{!index}" role="progressbar" aria-valuenow="40" aria-valuemin="0" aria-valuemax="100" style="width: 0%">
+                                    </div>
+                                </div>
+                                <apex:variable value="{!index+1}" var="index"/>
+                            </apex:column>
+                        </apex:dataTable>
+                        <apex:outputPanel layout="block" styleclass="text-center" rendered="{!customFileList.size == 0}">
+                            {!$Label.No_File_Selected_Msg}
+                        </apex:outputPanel>
+                    </apex:outputpanel> 
+                    <div class="row">
+                        <div class="col-xs-12">
+                            <div class="pull-right">
+                                <div class="btn btn-primary btn-file" style="display:{!If(parentId != null, 'inline-block','none')}">
+                                    {!$Label.Browse_Btn} 
+                                    <input type="file" multiple="true" class="btn btn-primary" onchange="angular.element(this).scope().fileSelected(this)" ng-Change="fileSelected(this)"/>
+                                </div>
+                                <apex:commandButton action="{!insertFiles}" rendered="{!parentId != null}" status="processStatus" id="saveBtn" disabled="{!customFileList.size == 0}" value="{!$Label.Save_Btn}" oncomplete="angular.element($('.container')).scope().saveAttachment()" rerender="fileTbl,msgPanel" styleclass="btn btn-primary"/>
+                                <apex:commandButton action="{!addRecordOnly}" rendered="{!parentId != null}" status="processStatus" value="{!$Label.Add_Record_Only_Btn}" oncomplete="angular.element($('.container')).scope().addRecordOnly()"  rerender="fileTbl,saveBtn" styleclass="btn btn-primary" immediate="true"/> 
+                                <apex:commandButton action="{!Cancel}" value="{!$Label.Cancel_Btn}" rerender="fileTbl,saveBtn" styleclass="btn btn-primary cancelBtn"/>
+                            </div>
+                        </div>
+                    </div>
+                    <apex:actionFunction action="{!addFiles}" rerender="fileTbl,saveBtn" name="addFilesOnSF" status="processStatus" oncomplete="angular.element($('.container')).scope().$apply()" immediate="true">
+                        <apex:param value="" assignTo="{!fileDetails}" name="noOfFilesSelected"/>
+                    </apex:actionFunction>
+                    <apex:actionFunction action="{!removeFile}" rerender="fileTbl,saveBtn" name="removeFileFromSF" status="processStatus" immediate="true">
+                        <apex:param value="" name="recIndex"/>
+                    </apex:actionFunction>
+                                    </div>
+            </div>     
+            
+            <apex:actionstatus id="processStatus" onstart="$('#pleaseWaitDialog').modal('show');" onstop=" $('#pleaseWaitDialog').modal('hide');">
+            </apex:actionstatus>
+            <div class="modal fade" id="pleaseWaitDialog" role="dialog" data-backdrop="static">
+                <div class="modal-dialog">
+                    <!-- Modal content-->
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h1>{!$Label.Processing_Msg}</h1>
+                        </div>
+                        <div class="modal-body">
+                            <div class="progress">
+                                <div class="progress-bar progress-bar-info progress-bar-striped" role="progressbar" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100" style="width: 100%">
+                                </div>
+                            </div>
+                        </div>
+                    </div>    
+                </div>
+            </div>    
+        </apex:form>
+    </div>
+</apex:page>
